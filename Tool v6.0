@@ -1,0 +1,435 @@
+from datetime import datetime
+import os
+import platform
+import subprocess
+import threading
+import time
+import tkinter as tk
+from tkinter import messagebox, ttk
+import psutil
+
+
+class SystemMonitorApp:
+
+  def __init__(self, root):
+    self.root = root
+    self.root.title("Python PC Health & Diagnostics Monitor")
+    self.root.geometry("680x740")
+    self.root.minsize(580, 620)
+
+    style = ttk.Style()
+    style.theme_use("clam")
+
+    # Notebook (Tabs)
+    notebook = ttk.Notebook(root)
+    notebook.pack(fill="both", expand=True, padx=10, pady=10)
+
+    # --- Tab 1: Overview & Performance (CPU, RAM, Cores) ---
+    self.tab_perf = ttk.Frame(notebook)
+    notebook.add(self.tab_perf, text="Performance & Hardware")
+
+    # RAM Frame
+    ram_frame = ttk.LabelFrame(
+        self.tab_perf, text=" RAM (Memory) Usage ", padding=10
+    )
+    ram_frame.pack(fill="x", padx=10, pady=10)
+
+    self.ram_label = ttk.Label(
+        ram_frame, text="Calculating...", font=("Arial", 10)
+    )
+    self.ram_label.pack(anchor="w")
+    self.ram_bar = ttk.Progressbar(
+        ram_frame, orient="horizontal", length=610, mode="determinate"
+    )
+    self.ram_bar.pack(fill="x", pady=5)
+
+    # CPU Overview Frame
+    cpu_frame = ttk.LabelFrame(
+        self.tab_perf, text=" Processor (CPU) Overview ", padding=10
+    )
+    cpu_frame.pack(fill="x", padx=10, pady=10)
+
+    self.cpu_info_label = ttk.Label(
+        cpu_frame, text="Calculating...", font=("Arial", 10)
+    )
+    self.cpu_info_label.pack(anchor="w")
+    self.cpu_bar = ttk.Progressbar(
+        cpu_frame, orient="horizontal", length=610, mode="determinate"
+    )
+    self.cpu_bar.pack(fill="x", pady=5)
+
+    # Per-Core / Threads Breakdown Frame
+    cores_frame = ttk.LabelFrame(
+        self.tab_perf, text=" Individual Cores & Threads Usage ", padding=10
+    )
+    cores_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+    # Canvas and Scrollbar for dynamic core thread bars
+    self.canvas = tk.Canvas(cores_frame, borderwidth=0, highlightthickness=0)
+    self.core_scrollable_frame = ttk.Frame(self.canvas)
+    self.scrollbar = ttk.Scrollbar(
+        cores_frame, orient="vertical", command=self.canvas.yview
+    )
+    self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+    self.scrollbar.pack(side="right", fill="y")
+    self.canvas.pack(side="left", fill="both", expand=True)
+    self.canvas.create_window(
+        (0, 0), window=self.core_scrollable_frame, anchor="nw"
+    )
+    self.core_scrollable_frame.bind(
+        "<Configure>",
+        lambda e: self.canvas.configure(
+            scrollregion=self.canvas.bbox("all")
+        ),
+    )
+
+    self.core_bars = []
+    self.setup_core_bars()
+
+    # --- Tab 2: System Status (Reboots, Uptime, Logins, Power, RDP) ---
+    self.tab_sys = ttk.Frame(notebook)
+    notebook.add(self.tab_sys, text="System & Power")
+
+    sys_frame = ttk.LabelFrame(
+        self.tab_sys, text=" System Boot & Session Diagnostic ", padding=10
+    )
+    sys_frame.pack(fill="x", padx=15, pady=10)
+
+    self.uptime_label = ttk.Label(
+        sys_frame, text="Checking system boot time...", font=("Arial", 10)
+    )
+    self.uptime_label.pack(anchor="w", pady=5)
+
+    ttk.Label(
+        sys_frame,
+        text="Active User Logins on this Machine:",
+        font=("Arial", 10, "bold"),
+    ).pack(anchor="w", pady=(10, 2))
+
+    # Text area to show logins securely
+    self.logins_text = tk.Text(
+        sys_frame, height=4, width=65, font=("Consolas", 9)
+    )
+    self.logins_text.pack(fill="both", expand=True, pady=2)
+    self.logins_text.config(state="disabled")
+
+    # --- Power Controls Frame (Shutdown / Reboot) ---
+    power_frame = ttk.LabelFrame(
+        self.tab_sys, text=" Power Controls ", padding=10
+    )
+    power_frame.pack(fill="x", padx=15, pady=6)
+
+    btn_reboot = tk.Button(
+        power_frame,
+        text="Restart PC",
+        bg="#ffcccc",
+        fg="black",
+        font=("Arial", 9, "bold"),
+        command=self.reboot_pc,
+    )
+    btn_reboot.pack(side=tk.LEFT, expand=True, fill="x", padx=5)
+
+    btn_shutdown = tk.Button(
+        power_frame,
+        text="Shut Down PC",
+        bg="#ff9999",
+        fg="black",
+        font=("Arial", 9, "bold"),
+        command=self.shutdown_pc,
+    )
+    btn_shutdown.pack(side=tk.RIGHT, expand=True, fill="x", padx=5)
+
+    # --- Remote Desktop (RDP) Frame ---
+    rdp_frame = ttk.LabelFrame(
+        self.tab_sys, text=" Remote Desktop (RDP) ", padding=10
+    )
+    rdp_frame.pack(fill="x", padx=15, pady=6)
+
+    btn_rdp = tk.Button(
+        rdp_frame,
+        text="Open Remote Desktop (RDP)",
+        bg="#cce5ff",
+        fg="black",
+        font=("Arial", 9, "bold"),
+        command=self.open_rdp,
+    )
+    btn_rdp.pack(fill="x", padx=5)
+
+    # --- Tab 3: Network Diagnostics (Ethernet & Wi-Fi IP controls) ---
+    self.tab_net = ttk.Frame(notebook)
+    notebook.add(self.tab_net, text="Network Config (IP)")
+
+    net_control_frame = ttk.LabelFrame(
+        self.tab_net, text=" Network Adapter Controls ", padding=10
+    )
+    net_control_frame.pack(fill="x", padx=15, pady=10)
+
+    btn_ipall = tk.Button(
+        net_control_frame,
+        text="View ipconfig /all",
+        bg="#d4edda",
+        fg="black",
+        font=("Arial", 9, "bold"),
+        command=self.run_ipconfig_all,
+    )
+    btn_ipall.pack(fill="x", pady=3)
+
+    # Ethernet control buttons row
+    eth_frame = ttk.Frame(net_control_frame)
+    eth_frame.pack(fill="x", pady=2)
+    ttk.Label(eth_frame, text="Ethernet:", width=10, font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+    
+    btn_eth_rel = tk.Button(
+        eth_frame, text="Release", bg="#fff3cd", fg="black", font=("Arial", 8), command=self.run_eth_release
+    )
+    btn_eth_rel.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
+
+    btn_eth_ren = tk.Button(
+        eth_frame, text="Renew", bg="#d1ecf1", fg="black", font=("Arial", 8), command=self.run_eth_renew
+    )
+    btn_eth_ren.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
+
+    # Wi-Fi control buttons row
+    wifi_frame = ttk.Frame(net_control_frame)
+    wifi_frame.pack(fill="x", pady=2)
+    ttk.Label(wifi_frame, text="Wi-Fi:", width=10, font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+
+    btn_wifi_rel = tk.Button(
+        wifi_frame, text="Release", bg="#fff3cd", fg="black", font=("Arial", 8), command=self.run_wifi_release
+    )
+    btn_wifi_rel.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
+
+    btn_wifi_ren = tk.Button(
+        wifi_frame, text="Renew", bg="#d1ecf1", fg="black", font=("Arial", 8), command=self.run_wifi_renew
+    )
+    btn_wifi_ren.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
+
+    # Output Terminal Text Box for network results
+    net_output_frame = ttk.LabelFrame(
+        self.tab_net, text=" Command Output Log ", padding=10
+    )
+    net_output_frame.pack(fill="both", expand=True, padx=15, pady=5)
+
+    self.net_text = tk.Text(
+        net_output_frame, height=14, width=75, font=("Consolas", 9)
+    )
+    self.net_text.pack(fill="both", expand=True, side=tk.LEFT)
+
+    net_scrollbar = ttk.Scrollbar(
+        net_output_frame, orient="vertical", command=self.net_text.yview
+    )
+    net_scrollbar.pack(side=tk.RIGHT, fill="y")
+    self.net_text.config(yscrollcommand=net_scrollbar.set)
+    self.net_text.insert(
+        tk.END,
+        "Ready. Select an Ethernet or Wi-Fi command above...\n",
+    )
+    self.net_text.config(state="disabled")
+
+    # Start background loop to refresh metrics smoothly
+    self.is_running = True
+    self.monitor_thread = threading.Thread(target=self.update_metrics_loop)
+    self.monitor_thread.daemon = True
+    self.monitor_thread.start()
+
+  def setup_core_bars(self):
+    num_threads = psutil.cpu_count(logical=True)
+    for i in range(num_threads):
+      frame = ttk.Frame(self.core_scrollable_frame)
+      frame.pack(fill="x", pady=2)
+
+      lbl = ttk.Label(frame, text=f"Core/Thread {i}:", width=15, font=("Arial", 9))
+      lbl.pack(side=tk.LEFT)
+
+      bar = ttk.Progressbar(
+          frame, orient="horizontal", length=350, mode="determinate"
+      )
+      bar.pack(side=tk.LEFT, padx=5, fill="x", expand=True)
+
+      val_lbl = ttk.Label(frame, text="0%", width=6, font=("Arial", 9))
+      val_lbl.pack(side=tk.LEFT)
+
+      self.core_bars.append((bar, val_lbl))
+
+  def update_metrics_loop(self):
+    while self.is_running:
+      try:
+        mem = psutil.virtual_memory()
+        ram_used_gb = mem.used / (1024**3)
+        ram_total_gb = mem.total / (1024**3)
+        ram_text = (
+            f"Used: {ram_used_gb:.2f} GB / Total: {ram_total_gb:.2f} GB"
+            f" ({mem.percent}%)"
+        )
+        self.ram_bar["value"] = mem.percent
+
+        cpu_total = psutil.cpu_percent(interval=1)
+        phys_cores = psutil.cpu_count(logical=False)
+        log_threads = psutil.cpu_count(logical=True)
+        cpu_text = (
+            f"Total Usage: {cpu_total}%  |  Physical Cores: {phys_cores}  |"
+            f" Logical Threads: {log_threads}"
+        )
+        self.cpu_bar["value"] = cpu_total
+
+        per_core = psutil.cpu_percent(percpu=True)
+
+        boot_timestamp = psutil.boot_time()
+        boot_time_dt = datetime.fromtimestamp(boot_timestamp)
+        uptime_seconds = time.time() - boot_timestamp
+        hours, remainder = divmod(int(uptime_seconds), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        days, hours = divmod(hours, 24)
+        uptime_str = f"Uptime: {days} days, {hours} hours, {minutes} minutes"
+        boot_str = (
+            "Last Boot / Reboot Time:"
+            f" {boot_time_dt.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
+        users = psutil.users()
+
+        self.root.after(
+            0,
+            self.refresh_ui,
+            ram_text,
+            cpu_text,
+            per_core,
+            boot_str,
+            uptime_str,
+            users,
+        )
+
+      except Exception as e:
+        print("Error fetching metrics:", e)
+      time.sleep(0.5)
+
+  def refresh_ui(
+      self, ram_text, cpu_text, per_core, boot_str, uptime_str, users
+  ):
+    self.ram_label.config(text=ram_text)
+    self.cpu_info_label.config(text=cpu_text)
+
+    for idx, usage in enumerate(per_core):
+      if idx < len(self.core_bars):
+        bar, val_lbl = self.core_bars[idx]
+        bar["value"] = usage
+        val_lbl.config(text=f"{usage:.1f}%")
+
+    self.uptime_label.config(text=f"{boot_str}\n{uptime_str}")
+
+    self.logins_text.config(state="normal")
+    self.logins_text.delete("1.0", tk.END)
+    if users:
+      for u in users:
+        login_time = datetime.fromtimestamp(u.started).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        self.logins_text.insert(
+            tk.END,
+            f"User: {u.name} | Host: {u.host or 'Local'} | Login Time:"
+            f" {login_time}\n",
+        )
+    else:
+      self.logins_text.insert(tk.END, "No active user tracking data found.")
+    self.logins_text.config(state="disabled")
+
+  def reboot_pc(self):
+    if messagebox.askyesno(
+        "Confirm Restart",
+        "Are you sure you want to restart your computer now?",
+    ):
+      try:
+        if platform.system() == "Windows":
+          os.system("shutdown /r /t 5")
+        else:
+          os.system("sudo reboot")
+        messagebox.showinfo(
+            "Restarting", "System restart command sent successfully."
+        )
+      except Exception as e:
+        messagebox.showerror("Error", f"Failed to restart: {e}")
+
+  def shutdown_pc(self):
+    if messagebox.askyesno(
+        "Confirm Shutdown", "Are you sure you want to shut down your computer?"
+    ):
+      try:
+        if platform.system() == "Windows":
+          os.system("shutdown /s /t 5")
+        else:
+          os.system("sudo shutdown now")
+        messagebox.showinfo(
+            "Shutting Down", "System shutdown command sent successfully."
+        )
+      except Exception as e:
+        messagebox.showerror("Error", f"Failed to shut down: {e}")
+
+  def open_rdp(self):
+    try:
+      if platform.system() == "Windows":
+        subprocess.Popen("mstsc")
+      else:
+        messagebox.showinfo(
+            "Info", "RDP shortcut launcher is optimized natively for Windows."
+        )
+    except Exception as e:
+      messagebox.showerror("Error", f"Could not launch RDP: {e}")
+
+  def run_command_in_terminal(self, command, log_title):
+    self.net_text.config(state="normal")
+    self.net_text.insert(
+        tk.END, f"\n--- Executing: {log_title} ---\n", "header"
+    )
+    self.net_text.see(tk.END)
+    self.net_text.config(state="disabled")
+
+    def execute():
+      try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            shell=True,
+            encoding="oem" if platform.system() == "Windows" else "utf-8",
+        )
+        output = result.stdout if result.stdout else result.stderr
+        self.root.after(0, self.update_net_output, output)
+      except Exception as e:
+        self.root.after(0, self.update_net_output, f"Error executing: {e}")
+
+    threading.Thread(target=execute, daemon=True).start()
+
+  def update_net_output(self, text):
+    self.net_text.config(state="normal")
+    self.net_text.insert(tk.END, text + "\n")
+    self.net_text.see(tk.END)
+    self.net_text.config(state="disabled")
+
+  def run_ipconfig_all(self):
+    self.run_command_in_terminal("ipconfig /all", "ipconfig /all")
+
+  def run_eth_release(self):
+    if messagebox.askyesno("Confirm", "Release Ethernet IP lease?"):
+      self.run_command_in_terminal('ipconfig /release "Ethernet"', 'ipconfig /release "Ethernet"')
+
+  def run_eth_renew(self):
+    self.run_command_in_terminal('ipconfig /renew "Ethernet"', 'ipconfig /renew "Ethernet"')
+
+  def run_wifi_release(self):
+    if messagebox.askyesno("Confirm", "Release Wi-Fi IP lease?"):
+      self.run_command_in_terminal('ipconfig /release "Wi-Fi"', 'ipconfig /release "Wi-Fi"')
+
+  def run_wifi_renew(self):
+    self.run_command_in_terminal('ipconfig /renew "Wi-Fi"', 'ipconfig /renew "Wi-Fi"')
+
+  def on_closing(self):
+    self.is_running = False
+    self.root.destroy()
+
+
+if __name__ == "__main__":
+  root = tk.Tk()
+  app = SystemMonitorApp(root)
+  root.protocol("WM_DELETE_WINDOW", app.on_closing)
+  root.mainloop()
