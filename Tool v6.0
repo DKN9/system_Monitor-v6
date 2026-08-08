@@ -13,9 +13,9 @@ class SystemMonitorApp:
 
   def __init__(self, root):
     self.root = root
-    self.root.title("Python PC Health & Diagnostics Monitor")
-    self.root.geometry("680x740")
-    self.root.minsize(580, 620)
+    self.root.title("Daim's PC Health & Diagnostics Monitor")
+    self.root.geometry("720x780")
+    self.root.minsize(600, 640)
 
     style = ttk.Style()
     style.theme_use("clam")
@@ -39,7 +39,7 @@ class SystemMonitorApp:
     )
     self.ram_label.pack(anchor="w")
     self.ram_bar = ttk.Progressbar(
-        ram_frame, orient="horizontal", length=610, mode="determinate"
+        ram_frame, orient="horizontal", length=650, mode="determinate"
     )
     self.ram_bar.pack(fill="x", pady=5)
 
@@ -54,7 +54,7 @@ class SystemMonitorApp:
     )
     self.cpu_info_label.pack(anchor="w")
     self.cpu_bar = ttk.Progressbar(
-        cpu_frame, orient="horizontal", length=610, mode="determinate"
+        cpu_frame, orient="horizontal", length=650, mode="determinate"
     )
     self.cpu_bar.pack(fill="x", pady=5)
 
@@ -178,30 +178,54 @@ class SystemMonitorApp:
     # Ethernet control buttons row
     eth_frame = ttk.Frame(net_control_frame)
     eth_frame.pack(fill="x", pady=2)
-    ttk.Label(eth_frame, text="Ethernet:", width=10, font=("Arial", 9, "bold")).pack(side=tk.LEFT)
-    
+    ttk.Label(
+        eth_frame, text="Ethernet:", width=10, font=("Arial", 9, "bold")
+    ).pack(side=tk.LEFT)
+
     btn_eth_rel = tk.Button(
-        eth_frame, text="Release", bg="#fff3cd", fg="black", font=("Arial", 8), command=self.run_eth_release
+        eth_frame,
+        text="Release",
+        bg="#fff3cd",
+        fg="black",
+        font=("Arial", 8),
+        command=self.run_eth_release,
     )
     btn_eth_rel.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
 
     btn_eth_ren = tk.Button(
-        eth_frame, text="Renew", bg="#d1ecf1", fg="black", font=("Arial", 8), command=self.run_eth_renew
+        eth_frame,
+        text="Renew",
+        bg="#d1ecf1",
+        fg="black",
+        font=("Arial", 8),
+        command=self.run_eth_renew,
     )
     btn_eth_ren.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
 
     # Wi-Fi control buttons row
     wifi_frame = ttk.Frame(net_control_frame)
     wifi_frame.pack(fill="x", pady=2)
-    ttk.Label(wifi_frame, text="Wi-Fi:", width=10, font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+    ttk.Label(wifi_frame, text="Wi-Fi:", width=10, font=("Arial", 9, "bold")).pack(
+        side=tk.LEFT
+    )
 
     btn_wifi_rel = tk.Button(
-        wifi_frame, text="Release", bg="#fff3cd", fg="black", font=("Arial", 8), command=self.run_wifi_release
+        wifi_frame,
+        text="Release",
+        bg="#fff3cd",
+        fg="black",
+        font=("Arial", 8),
+        command=self.run_wifi_release,
     )
     btn_wifi_rel.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
 
     btn_wifi_ren = tk.Button(
-        wifi_frame, text="Renew", bg="#d1ecf1", fg="black", font=("Arial", 8), command=self.run_wifi_renew
+        wifi_frame,
+        text="Renew",
+        bg="#d1ecf1",
+        fg="black",
+        font=("Arial", 8),
+        command=self.run_wifi_renew,
     )
     btn_wifi_ren.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
 
@@ -227,6 +251,42 @@ class SystemMonitorApp:
     )
     self.net_text.config(state="disabled")
 
+    # --- Tab 4: System Info (OS Name, Version, Model, Serial, etc.) ---
+    self.tab_info = ttk.Frame(notebook)
+    notebook.add(self.tab_info, text="System Info")
+
+    info_control_frame = ttk.Frame(self.tab_info)
+    info_control_frame.pack(fill="x", padx=15, pady=10)
+
+    btn_refresh_info = tk.Button(
+        info_control_frame,
+        text="Refresh / Load Complete systeminfo",
+        bg="#d4edda",
+        fg="black",
+        font=("Arial", 9, "bold"),
+        command=self.load_system_info_async,
+    )
+    btn_refresh_info.pack(fill="x")
+
+    info_output_frame = ttk.LabelFrame(
+        self.tab_info, text=" Detailed System Information (systeminfo) ", padding=10
+    )
+    info_output_frame.pack(fill="both", expand=True, padx=15, pady=5)
+
+    self.info_text = tk.Text(
+        info_output_frame, height=20, width=75, font=("Consolas", 9)
+    )
+    self.info_text.pack(fill="both", expand=True, side=tk.LEFT, padx=2, pady=2)
+
+    info_scrollbar = ttk.Scrollbar(
+        info_output_frame, orient="vertical", command=self.info_text.yview
+    )
+    info_scrollbar.pack(side=tk.RIGHT, fill="y")
+    self.info_text.config(yscrollcommand=info_scrollbar.set)
+
+    # Automatically load system info on startup
+    self.load_system_info_async()
+
     # Start background loop to refresh metrics smoothly
     self.is_running = True
     self.monitor_thread = threading.Thread(target=self.update_metrics_loop)
@@ -239,7 +299,9 @@ class SystemMonitorApp:
       frame = ttk.Frame(self.core_scrollable_frame)
       frame.pack(fill="x", pady=2)
 
-      lbl = ttk.Label(frame, text=f"Core/Thread {i}:", width=15, font=("Arial", 9))
+      lbl = ttk.Label(
+          frame, text=f"Core/Thread {i}:", width=15, font=("Arial", 9)
+      )
       lbl.pack(side=tk.LEFT)
 
       bar = ttk.Progressbar(
@@ -334,6 +396,51 @@ class SystemMonitorApp:
       self.logins_text.insert(tk.END, "No active user tracking data found.")
     self.logins_text.config(state="disabled")
 
+  def load_system_info_async(self):
+    self.info_text.config(state="normal")
+    self.info_text.delete("1.0", tk.END)
+    self.info_text.insert(
+        tk.END,
+        "Fetching complete Windows system info (this may take a few"
+        " seconds)...\n",
+    )
+    self.info_text.config(state="disabled")
+
+    def fetch():
+      try:
+        if platform.system() == "Windows":
+          result = subprocess.run(
+              "systeminfo",
+              capture_output=True,
+              text=True,
+              shell=True,
+              encoding="oem",
+          )
+          output = (
+              result.stdout
+              if result.stdout
+              else "Failed to pull systeminfo."
+          )
+        else:
+          output = (
+              "The 'systeminfo' command is specific to Windows operating"
+              " systems."
+          )
+        self.root.after(0, self.update_system_info_output, output)
+      except Exception as e:
+        self.root.after(
+            0, self.update_system_info_output, f"Error gathering info: {e}"
+        )
+
+    threading.Thread(target=fetch, daemon=True).start()
+
+  def update_system_info_output(self, text):
+    self.info_text.config(state="normal")
+    self.info_text.delete("1.0", tk.END)
+    self.info_text.insert(tk.END, text)
+    self.info_text.see("1.0")
+    self.info_text.config(state="disabled")
+
   def reboot_pc(self):
     if messagebox.askyesno(
         "Confirm Restart",
@@ -411,17 +518,25 @@ class SystemMonitorApp:
 
   def run_eth_release(self):
     if messagebox.askyesno("Confirm", "Release Ethernet IP lease?"):
-      self.run_command_in_terminal('ipconfig /release "Ethernet"', 'ipconfig /release "Ethernet"')
+      self.run_command_in_terminal(
+          'ipconfig /release "Ethernet"', 'ipconfig /release "Ethernet"'
+      )
 
   def run_eth_renew(self):
-    self.run_command_in_terminal('ipconfig /renew "Ethernet"', 'ipconfig /renew "Ethernet"')
+    self.run_command_in_terminal(
+        'ipconfig /renew "Ethernet"', 'ipconfig /renew "Ethernet"'
+    )
 
   def run_wifi_release(self):
     if messagebox.askyesno("Confirm", "Release Wi-Fi IP lease?"):
-      self.run_command_in_terminal('ipconfig /release "Wi-Fi"', 'ipconfig /release "Wi-Fi"')
+      self.run_command_in_terminal(
+          'ipconfig /release "Wi-Fi"', 'ipconfig /release "Wi-Fi"'
+      )
 
   def run_wifi_renew(self):
-    self.run_command_in_terminal('ipconfig /renew "Wi-Fi"', 'ipconfig /renew "Wi-Fi"')
+    self.run_command_in_terminal(
+        'ipconfig /renew "Wi-Fi"', 'ipconfig /renew "Wi-Fi"'
+    )
 
   def on_closing(self):
     self.is_running = False
