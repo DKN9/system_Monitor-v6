@@ -1,550 +1,1115 @@
-from datetime import datetime
+# -*- coding: utf-8 -*-
 import os
 import platform
 import subprocess
 import threading
 import time
+from datetime import datetime
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
+import winreg
 import psutil
 
 
-class SystemMonitorApp:
+class ComprehensiveSystemMonitorApp:
 
-  def __init__(self, root):
-    self.root = root
-    self.root.title("Daim's PC Health & Diagnostics Monitor")
-    self.root.geometry("720x780")
-    self.root.minsize(600, 640)
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Daim's PC Health, Hardware & Diagnostic Suite")
+        self.root.geometry("1020x980")
+        self.root.minsize(850, 750)
 
-    style = ttk.Style()
-    style.theme_use("clam")
+        # Theme state (False = Light, True = Dark)
+        self.dark_mode = True
 
-    # Notebook (Tabs)
-    notebook = ttk.Notebook(root)
-    notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        # Define Color Palettes
+        self.colors = {
+            "dark": {
+                "bg": "#1E222A",
+                "card_bg": "#282C34",
+                "fg": "#ABB2BF",
+                "accent": "#61AFEF",
+                "accent_fg": "#1E222A",
+                "button_bg": "#3E4451",
+                "button_fg": "#FFFFFF",
+                "danger_bg": "#E06C75",
+                "success_bg": "#98C379",
+                "warning_bg": "#E5C07B",
+                "info_bg": "#61AFEF",
+                "text_area_bg": "#181A1F",
+                "text_area_fg": "#98C379",
+            },
+            "light": {
+                "bg": "#F4F5F7",
+                "card_bg": "#FFFFFF",
+                "fg": "#212529",
+                "accent": "#0056B3",
+                "accent_fg": "#FFFFFF",
+                "button_bg": "#E9ECEF",
+                "button_fg": "#212529",
+                "danger_bg": "#DC3545",
+                "success_bg": "#28A745",
+                "warning_bg": "#FFC107",
+                "info_bg": "#17A2B8",
+                "text_area_bg": "#212529",
+                "text_area_fg": "#20C997",
+            },
+        }
 
-    # --- Tab 1: Overview & Performance (CPU, RAM, Cores) ---
-    self.tab_perf = ttk.Frame(notebook)
-    notebook.add(self.tab_perf, text="Performance & Hardware")
+        self.style = ttk.Style()
+        self.setup_themes()
 
-    # RAM Frame
-    ram_frame = ttk.LabelFrame(
-        self.tab_perf, text=" RAM (Memory) Usage ", padding=10
-    )
-    ram_frame.pack(fill="x", padx=10, pady=10)
+        # --- Top Control Bar (Live Time & Theme Toggle) ---
+        top_bar = tk.Frame(root, bg=self.get_c("bg"), padx=5, pady=5)
+        top_bar.pack(fill="x", padx=10, pady=(5, 0))
 
-    self.ram_label = ttk.Label(
-        ram_frame, text="Calculating...", font=("Arial", 10)
-    )
-    self.ram_label.pack(anchor="w")
-    self.ram_bar = ttk.Progressbar(
-        ram_frame, orient="horizontal", length=650, mode="determinate"
-    )
-    self.ram_bar.pack(fill="x", pady=5)
-
-    # CPU Overview Frame
-    cpu_frame = ttk.LabelFrame(
-        self.tab_perf, text=" Processor (CPU) Overview ", padding=10
-    )
-    cpu_frame.pack(fill="x", padx=10, pady=10)
-
-    self.cpu_info_label = ttk.Label(
-        cpu_frame, text="Calculating...", font=("Arial", 10)
-    )
-    self.cpu_info_label.pack(anchor="w")
-    self.cpu_bar = ttk.Progressbar(
-        cpu_frame, orient="horizontal", length=650, mode="determinate"
-    )
-    self.cpu_bar.pack(fill="x", pady=5)
-
-    # Per-Core / Threads Breakdown Frame
-    cores_frame = ttk.LabelFrame(
-        self.tab_perf, text=" Individual Cores & Threads Usage ", padding=10
-    )
-    cores_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-    # Canvas and Scrollbar for dynamic core thread bars
-    self.canvas = tk.Canvas(cores_frame, borderwidth=0, highlightthickness=0)
-    self.core_scrollable_frame = ttk.Frame(self.canvas)
-    self.scrollbar = ttk.Scrollbar(
-        cores_frame, orient="vertical", command=self.canvas.yview
-    )
-    self.canvas.configure(yscrollcommand=self.scrollbar.set)
-
-    self.scrollbar.pack(side="right", fill="y")
-    self.canvas.pack(side="left", fill="both", expand=True)
-    self.canvas.create_window(
-        (0, 0), window=self.core_scrollable_frame, anchor="nw"
-    )
-    self.core_scrollable_frame.bind(
-        "<Configure>",
-        lambda e: self.canvas.configure(
-            scrollregion=self.canvas.bbox("all")
-        ),
-    )
-
-    self.core_bars = []
-    self.setup_core_bars()
-
-    # --- Tab 2: System Status (Reboots, Uptime, Logins, Power, RDP) ---
-    self.tab_sys = ttk.Frame(notebook)
-    notebook.add(self.tab_sys, text="System & Power")
-
-    sys_frame = ttk.LabelFrame(
-        self.tab_sys, text=" System Boot & Session Diagnostic ", padding=10
-    )
-    sys_frame.pack(fill="x", padx=15, pady=10)
-
-    self.uptime_label = ttk.Label(
-        sys_frame, text="Checking system boot time...", font=("Arial", 10)
-    )
-    self.uptime_label.pack(anchor="w", pady=5)
-
-    ttk.Label(
-        sys_frame,
-        text="Active User Logins on this Machine:",
-        font=("Arial", 10, "bold"),
-    ).pack(anchor="w", pady=(10, 2))
-
-    # Text area to show logins securely
-    self.logins_text = tk.Text(
-        sys_frame, height=4, width=65, font=("Consolas", 9)
-    )
-    self.logins_text.pack(fill="both", expand=True, pady=2)
-    self.logins_text.config(state="disabled")
-
-    # --- Power Controls Frame (Shutdown / Reboot) ---
-    power_frame = ttk.LabelFrame(
-        self.tab_sys, text=" Power Controls ", padding=10
-    )
-    power_frame.pack(fill="x", padx=15, pady=6)
-
-    btn_reboot = tk.Button(
-        power_frame,
-        text="Restart PC",
-        bg="#ffcccc",
-        fg="black",
-        font=("Arial", 9, "bold"),
-        command=self.reboot_pc,
-    )
-    btn_reboot.pack(side=tk.LEFT, expand=True, fill="x", padx=5)
-
-    btn_shutdown = tk.Button(
-        power_frame,
-        text="Shut Down PC",
-        bg="#ff9999",
-        fg="black",
-        font=("Arial", 9, "bold"),
-        command=self.shutdown_pc,
-    )
-    btn_shutdown.pack(side=tk.RIGHT, expand=True, fill="x", padx=5)
-
-    # --- Remote Desktop (RDP) Frame ---
-    rdp_frame = ttk.LabelFrame(
-        self.tab_sys, text=" Remote Desktop (RDP) ", padding=10
-    )
-    rdp_frame.pack(fill="x", padx=15, pady=6)
-
-    btn_rdp = tk.Button(
-        rdp_frame,
-        text="Open Remote Desktop (RDP)",
-        bg="#cce5ff",
-        fg="black",
-        font=("Arial", 9, "bold"),
-        command=self.open_rdp,
-    )
-    btn_rdp.pack(fill="x", padx=5)
-
-    # --- Tab 3: Network Diagnostics (Ethernet & Wi-Fi IP controls) ---
-    self.tab_net = ttk.Frame(notebook)
-    notebook.add(self.tab_net, text="Network Config (IP)")
-
-    net_control_frame = ttk.LabelFrame(
-        self.tab_net, text=" Network Adapter Controls ", padding=10
-    )
-    net_control_frame.pack(fill="x", padx=15, pady=10)
-
-    btn_ipall = tk.Button(
-        net_control_frame,
-        text="View ipconfig /all",
-        bg="#d4edda",
-        fg="black",
-        font=("Arial", 9, "bold"),
-        command=self.run_ipconfig_all,
-    )
-    btn_ipall.pack(fill="x", pady=3)
-
-    # Ethernet control buttons row
-    eth_frame = ttk.Frame(net_control_frame)
-    eth_frame.pack(fill="x", pady=2)
-    ttk.Label(
-        eth_frame, text="Ethernet:", width=10, font=("Arial", 9, "bold")
-    ).pack(side=tk.LEFT)
-
-    btn_eth_rel = tk.Button(
-        eth_frame,
-        text="Release",
-        bg="#fff3cd",
-        fg="black",
-        font=("Arial", 8),
-        command=self.run_eth_release,
-    )
-    btn_eth_rel.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
-
-    btn_eth_ren = tk.Button(
-        eth_frame,
-        text="Renew",
-        bg="#d1ecf1",
-        fg="black",
-        font=("Arial", 8),
-        command=self.run_eth_renew,
-    )
-    btn_eth_ren.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
-
-    # Wi-Fi control buttons row
-    wifi_frame = ttk.Frame(net_control_frame)
-    wifi_frame.pack(fill="x", pady=2)
-    ttk.Label(wifi_frame, text="Wi-Fi:", width=10, font=("Arial", 9, "bold")).pack(
-        side=tk.LEFT
-    )
-
-    btn_wifi_rel = tk.Button(
-        wifi_frame,
-        text="Release",
-        bg="#fff3cd",
-        fg="black",
-        font=("Arial", 8),
-        command=self.run_wifi_release,
-    )
-    btn_wifi_rel.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
-
-    btn_wifi_ren = tk.Button(
-        wifi_frame,
-        text="Renew",
-        bg="#d1ecf1",
-        fg="black",
-        font=("Arial", 8),
-        command=self.run_wifi_renew,
-    )
-    btn_wifi_ren.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
-
-    # Output Terminal Text Box for network results
-    net_output_frame = ttk.LabelFrame(
-        self.tab_net, text=" Command Output Log ", padding=10
-    )
-    net_output_frame.pack(fill="both", expand=True, padx=15, pady=5)
-
-    self.net_text = tk.Text(
-        net_output_frame, height=14, width=75, font=("Consolas", 9)
-    )
-    self.net_text.pack(fill="both", expand=True, side=tk.LEFT)
-
-    net_scrollbar = ttk.Scrollbar(
-        net_output_frame, orient="vertical", command=self.net_text.yview
-    )
-    net_scrollbar.pack(side=tk.RIGHT, fill="y")
-    self.net_text.config(yscrollcommand=net_scrollbar.set)
-    self.net_text.insert(
-        tk.END,
-        "Ready. Select an Ethernet or Wi-Fi command above...\n",
-    )
-    self.net_text.config(state="disabled")
-
-    # --- Tab 4: System Info (OS Name, Version, Model, Serial, etc.) ---
-    self.tab_info = ttk.Frame(notebook)
-    notebook.add(self.tab_info, text="System Info")
-
-    info_control_frame = ttk.Frame(self.tab_info)
-    info_control_frame.pack(fill="x", padx=15, pady=10)
-
-    btn_refresh_info = tk.Button(
-        info_control_frame,
-        text="Refresh / Load Complete systeminfo",
-        bg="#d4edda",
-        fg="black",
-        font=("Arial", 9, "bold"),
-        command=self.load_system_info_async,
-    )
-    btn_refresh_info.pack(fill="x")
-
-    info_output_frame = ttk.LabelFrame(
-        self.tab_info, text=" Detailed System Information (systeminfo) ", padding=10
-    )
-    info_output_frame.pack(fill="both", expand=True, padx=15, pady=5)
-
-    self.info_text = tk.Text(
-        info_output_frame, height=20, width=75, font=("Consolas", 9)
-    )
-    self.info_text.pack(fill="both", expand=True, side=tk.LEFT, padx=2, pady=2)
-
-    info_scrollbar = ttk.Scrollbar(
-        info_output_frame, orient="vertical", command=self.info_text.yview
-    )
-    info_scrollbar.pack(side=tk.RIGHT, fill="y")
-    self.info_text.config(yscrollcommand=info_scrollbar.set)
-
-    # Automatically load system info on startup
-    self.load_system_info_async()
-
-    # Start background loop to refresh metrics smoothly
-    self.is_running = True
-    self.monitor_thread = threading.Thread(target=self.update_metrics_loop)
-    self.monitor_thread.daemon = True
-    self.monitor_thread.start()
-
-  def setup_core_bars(self):
-    num_threads = psutil.cpu_count(logical=True)
-    for i in range(num_threads):
-      frame = ttk.Frame(self.core_scrollable_frame)
-      frame.pack(fill="x", pady=2)
-
-      lbl = ttk.Label(
-          frame, text=f"Core/Thread {i}:", width=15, font=("Arial", 9)
-      )
-      lbl.pack(side=tk.LEFT)
-
-      bar = ttk.Progressbar(
-          frame, orient="horizontal", length=350, mode="determinate"
-      )
-      bar.pack(side=tk.LEFT, padx=5, fill="x", expand=True)
-
-      val_lbl = ttk.Label(frame, text="0%", width=6, font=("Arial", 9))
-      val_lbl.pack(side=tk.LEFT)
-
-      self.core_bars.append((bar, val_lbl))
-
-  def update_metrics_loop(self):
-    while self.is_running:
-      try:
-        mem = psutil.virtual_memory()
-        ram_used_gb = mem.used / (1024**3)
-        ram_total_gb = mem.total / (1024**3)
-        ram_text = (
-            f"Used: {ram_used_gb:.2f} GB / Total: {ram_total_gb:.2f} GB"
-            f" ({mem.percent}%)"
+        self.clock_label = tk.Label(
+            top_bar,
+            text="",
+            font=("Consolas", 10, "bold"),
+            bg=self.get_c("bg"),
+            fg=self.get_c("accent"),
         )
-        self.ram_bar["value"] = mem.percent
+        self.clock_label.pack(side=tk.LEFT, padx=5)
 
-        cpu_total = psutil.cpu_percent(interval=1)
-        phys_cores = psutil.cpu_count(logical=False)
-        log_threads = psutil.cpu_count(logical=True)
-        cpu_text = (
-            f"Total Usage: {cpu_total}%  |  Physical Cores: {phys_cores}  |"
-            f" Logical Threads: {log_threads}"
+        self.theme_btn = tk.Button(
+            top_bar,
+            text="Toggle Light Mode" if self.dark_mode else "Toggle Dark Mode",
+            font=("Arial", 9, "bold"),
+            bg=self.get_c("button_bg"),
+            fg=self.get_c("button_fg"),
+            activebackground=self.get_c("accent"),
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=3,
+            command=self.toggle_theme,
         )
-        self.cpu_bar["value"] = cpu_total
+        self.theme_btn.pack(side=tk.RIGHT)
 
-        per_core = psutil.cpu_percent(percpu=True)
+        self.update_live_clock()
 
-        boot_timestamp = psutil.boot_time()
-        boot_time_dt = datetime.fromtimestamp(boot_timestamp)
-        uptime_seconds = time.time() - boot_timestamp
-        hours, remainder = divmod(int(uptime_seconds), 3600)
-        minutes, seconds = divmod(remainder, 60)
-        days, hours = divmod(hours, 24)
-        uptime_str = f"Uptime: {days} days, {hours} hours, {minutes} minutes"
-        boot_str = (
-            "Last Boot / Reboot Time:"
-            f" {boot_time_dt.strftime('%Y-%m-%d %H:%M:%S')}"
+        # Notebook (Tabs Container)
+        self.notebook = ttk.Notebook(root)
+        self.notebook.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # Build All Required Tabs
+        self.build_tab_perf_history()
+        self.build_tab_gpu()
+        self.build_tab_process_manager()
+        self.build_tab_services()
+        self.build_tab_startup_apps()
+        self.build_tab_disk_storage()
+        self.build_tab_battery()
+        self.build_tab_hardware_info()
+        self.build_tab_win_security()
+        self.build_tab_network_adapters()
+        self.build_tab_event_logs()
+        self.build_tab_quick_diagnostics()
+
+        # Background Metric Monitoring Thread
+        self.is_running = True
+        self.monitor_thread = threading.Thread(target=self.update_metrics_loop)
+        self.monitor_thread.daemon = True
+        self.monitor_thread.start()
+
+    def get_c(self, key):
+        theme_str = "dark" if self.dark_mode else "light"
+        return self.colors[theme_str][key]
+
+    def update_live_clock(self):
+        current_time_str = datetime.now().strftime(
+            " DATE: %Y-%m-%d  TIME: %H:%M:%S"
+        )
+        self.clock_label.config(text=current_time_str)
+        self.root.after(1000, self.update_live_clock)
+
+    def setup_themes(self):
+        c = "dark" if self.dark_mode else "light"
+        theme_data = self.colors[c]
+
+        self.style.theme_use("clam")
+        self.root.configure(bg=theme_data["bg"])
+
+        self.style.configure("TFrame", background=theme_data["bg"])
+        self.style.configure(
+            "TLabelframe",
+            background=theme_data["card_bg"],
+            foreground=theme_data["accent"],
+            bordercolor=theme_data["button_bg"],
+            relief="solid",
+        )
+        self.style.configure(
+            "TLabelframe.Label",
+            background=theme_data["card_bg"],
+            foreground=theme_data["accent"],
+            font=("Arial", 9, "bold"),
+        )
+        self.style.configure(
+            "TLabel",
+            background=theme_data["card_bg"],
+            foreground=theme_data["fg"],
+        )
+        self.style.configure(
+            "TNotebook",
+            background=theme_data["bg"],
+            borderwidth=0,
+        )
+        self.style.configure(
+            "TNotebook.Tab",
+            background=theme_data["card_bg"],
+            foreground=theme_data["fg"],
+            padding=[8, 4],
+            font=("Arial", 8, "bold"),
+        )
+        self.style.map(
+            "TNotebook.Tab",
+            background=[("selected", theme_data["accent"])],
+            foreground=[("selected", theme_data["accent_fg"])],
+        )
+        self.style.configure(
+            "Horizontal.TProgressbar",
+            troughcolor=theme_data["bg"],
+            background=theme_data["accent"],
+            bordercolor=theme_data["card_bg"],
+            thickness=14,
+        )
+        self.style.configure(
+            "Treeview",
+            background=theme_data["card_bg"],
+            foreground=theme_data["fg"],
+            fieldbackground=theme_data["card_bg"],
+            rowheight=22,
+        )
+        self.style.configure(
+            "Treeview.Heading",
+            background=theme_data["button_bg"],
+            foreground=theme_data["button_fg"],
+            font=("Arial", 8, "bold"),
         )
 
-        users = psutil.users()
+    def toggle_theme(self):
+        self.dark_mode = not self.dark_mode
+        self.setup_themes()
 
-        self.root.after(
-            0,
-            self.refresh_ui,
-            ram_text,
-            cpu_text,
-            per_core,
-            boot_str,
-            uptime_str,
-            users,
+        self.root.config(bg=self.get_c("bg"))
+        self.theme_btn.config(
+            text="Toggle Light Mode" if self.dark_mode else "Toggle Dark Mode",
+            bg=self.get_c("button_bg"),
+            fg=self.get_c("button_fg"),
         )
+        self.clock_label.config(bg=self.get_c("bg"), fg=self.get_c("accent"))
 
-      except Exception as e:
-        print("Error fetching metrics:", e)
-      time.sleep(0.5)
+        # Dynamic Text Areas refresh
+        for tw in [
+            getattr(self, "gpu_text", None),
+            getattr(self, "hw_text", None),
+            getattr(self, "sec_text", None),
+            getattr(self, "net_text", None),
+            getattr(self, "event_text", None),
+            getattr(self, "diag_text", None),
+        ]:
+            if tw:
+                tw.config(
+                    bg=self.get_c("text_area_bg"),
+                    fg=self.get_c("text_area_fg"),
+                    insertbackground=self.get_c("fg"),
+                )
 
-  def refresh_ui(
-      self, ram_text, cpu_text, per_core, boot_str, uptime_str, users
-  ):
-    self.ram_label.config(text=ram_text)
-    self.cpu_info_label.config(text=cpu_text)
+    def launch_win_tool(self, command):
+        try:
+            if platform.system() == "Windows":
+                if command.startswith("ms-settings:"):
+                    os.startfile(command)
+                else:
+                    subprocess.Popen(command, shell=True)
+            else:
+                messagebox.showinfo("OS Notice", f"'{command}' is Windows specific.")
+        except Exception as e:
+            messagebox.showerror("Execution Error", f"Failed to launch:\n{e}")
 
-    for idx, usage in enumerate(per_core):
-      if idx < len(self.core_bars):
-        bar, val_lbl = self.core_bars[idx]
-        bar["value"] = usage
-        val_lbl.config(text=f"{usage:.1f}%")
+    def run_cmd_async(self, command, text_widget, clear_before=True):
+        def task():
+            try:
+                output = subprocess.check_output(
+                    command, shell=True, stderr=subprocess.STDOUT, text=True
+                )
+            except subprocess.CalledProcessError as e:
+                output = e.output if e.output else str(e)
+            except Exception as e:
+                output = str(e)
 
-    self.uptime_label.config(text=f"{boot_str}\n{uptime_str}")
+            self.root.after(0, self.append_to_text_widget, text_widget, output, clear_before)
 
-    self.logins_text.config(state="normal")
-    self.logins_text.delete("1.0", tk.END)
-    if users:
-      for u in users:
-        login_time = datetime.fromtimestamp(u.started).strftime(
-            "%Y-%m-%d %H:%M:%S"
+        text_widget.config(state="normal")
+        if clear_before:
+            text_widget.delete("1.0", tk.END)
+        text_widget.insert(tk.END, f"Executing: {command}\nPlease wait...\n\n")
+        text_widget.config(state="disabled")
+        threading.Thread(target=task, daemon=True).start()
+
+    def append_to_text_widget(self, text_widget, content, clear_before=True):
+        text_widget.config(state="normal")
+        if clear_before:
+            text_widget.delete("1.0", tk.END)
+        text_widget.insert(tk.END, content)
+        text_widget.config(state="disabled")
+
+    def save_log_to_file(self, text_widget):
+        log_content = text_widget.get("1.0", tk.END).strip()
+        if not log_content:
+            messagebox.showwarning("Empty Log", "No log content available to save.")
+            return
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+            title="Save Output Log",
         )
-        self.logins_text.insert(
-            tk.END,
-            f"User: {u.name} | Host: {u.host or 'Local'} | Login Time:"
-            f" {login_time}\n",
+        if file_path:
+            try:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(log_content)
+                messagebox.showinfo("Saved", f"Log written to:\n{file_path}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to write file: {e}")
+
+    # =========================================================================
+    # TAB 1: Performance History
+    # =========================================================================
+    def build_tab_perf_history(self):
+        tab = ttk.Frame(self.notebook, style="TFrame")
+        self.notebook.add(tab, text="Perf History")
+
+        # CPU Overview
+        cpu_frame = ttk.LabelFrame(tab, text=" CPU Realtime Metrics ", padding=10)
+        cpu_frame.pack(fill="x", padx=10, pady=5)
+        self.cpu_info_label = ttk.Label(cpu_frame, text="Calculating CPU...", font=("Arial", 9, "bold"))
+        self.cpu_info_label.pack(anchor="w")
+        self.cpu_bar = ttk.Progressbar(cpu_frame, orient="horizontal", mode="determinate")
+        self.cpu_bar.pack(fill="x", pady=5)
+
+        # RAM Overview
+        ram_frame = ttk.LabelFrame(tab, text=" RAM Memory Usage ", padding=10)
+        ram_frame.pack(fill="x", padx=10, pady=5)
+        self.ram_label = ttk.Label(ram_frame, text="Calculating Memory...", font=("Arial", 9))
+        self.ram_label.pack(anchor="w")
+        self.ram_bar = ttk.Progressbar(ram_frame, orient="horizontal", mode="determinate")
+        self.ram_bar.pack(fill="x", pady=5)
+
+        # Network Throughput
+        net_frame = ttk.LabelFrame(tab, text=" Live Network Speed ", padding=10)
+        net_frame.pack(fill="x", padx=10, pady=5)
+        self.net_io_label = ttk.Label(net_frame, text="Upload: 0.00 KB/s | Download: 0.00 KB/s", font=("Arial", 9, "bold"))
+        self.net_io_label.pack(anchor="w")
+
+        # Per-Core Breakdown
+        cores_frame = ttk.LabelFrame(tab, text=" Logical CPU Cores ", padding=10)
+        cores_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        canvas = tk.Canvas(cores_frame, borderwidth=0, highlightthickness=0, bg=self.get_c("card_bg"))
+        scroll_frame = ttk.Frame(canvas, style="TFrame")
+        scrollbar = ttk.Scrollbar(cores_frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        self.core_bars = []
+        count = psutil.cpu_count(logical=True) or 1
+        for i in range(count):
+            lbl = ttk.Label(scroll_frame, text=f"Core {i}: 0%", font=("Arial", 8))
+            lbl.pack(anchor="w", padx=5, pady=(2, 0))
+            bar = ttk.Progressbar(scroll_frame, orient="horizontal", length=550, mode="determinate")
+            bar.pack(fill="x", padx=5, pady=(0, 4))
+            self.core_bars.append((lbl, bar))
+
+    # =========================================================================
+    # TAB 2: GPU Monitor
+    # =========================================================================
+    def build_tab_gpu(self):
+        tab = ttk.Frame(self.notebook, style="TFrame")
+        self.notebook.add(tab, text="GPU Monitor")
+
+        ctrl_frame = ttk.Frame(tab, padding=10)
+        ctrl_frame.pack(fill="x")
+
+        btn_gpu = tk.Button(
+            ctrl_frame,
+            text="Query GPU Controllers & VRAM",
+            bg=self.get_c("button_bg"),
+            fg=self.get_c("button_fg"),
+            font=("Arial", 9, "bold"),
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=5,
+            command=self.load_gpu_info,
         )
-    else:
-      self.logins_text.insert(tk.END, "No active user tracking data found.")
-    self.logins_text.config(state="disabled")
+        btn_gpu.pack(side=tk.LEFT)
 
-  def load_system_info_async(self):
-    self.info_text.config(state="normal")
-    self.info_text.delete("1.0", tk.END)
-    self.info_text.insert(
-        tk.END,
-        "Fetching complete Windows system info (this may take a few"
-        " seconds)...\n",
-    )
-    self.info_text.config(state="disabled")
+        out_frame = ttk.LabelFrame(tab, text=" GPU Diagnostic Output ", padding=10)
+        out_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-    def fetch():
-      try:
-        if platform.system() == "Windows":
-          result = subprocess.run(
-              "systeminfo",
-              capture_output=True,
-              text=True,
-              shell=True,
-              encoding="oem",
-          )
-          output = (
-              result.stdout
-              if result.stdout
-              else "Failed to pull systeminfo."
-          )
+        self.gpu_text = tk.Text(
+            out_frame,
+            font=("Consolas", 9),
+            bg=self.get_c("text_area_bg"),
+            fg=self.get_c("text_area_fg"),
+            insertbackground=self.get_c("fg"),
+            relief="flat",
+        )
+        self.gpu_text.pack(fill="both", expand=True, side=tk.LEFT)
+        scroll = ttk.Scrollbar(out_frame, command=self.gpu_text.yview)
+        scroll.pack(side=tk.RIGHT, fill="y")
+        self.gpu_text.config(yscrollcommand=scroll.set)
+
+        self.load_gpu_info()
+
+    def load_gpu_info(self):
+        cmd = 'powershell -Command "Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, VideoProcessor, AdapterRAM, Status | Format-List"'
+        self.run_cmd_async(cmd, self.gpu_text)
+
+    # =========================================================================
+    # TAB 3: Process Manager
+    # =========================================================================
+    def build_tab_process_manager(self):
+        tab = ttk.Frame(self.notebook, style="TFrame")
+        self.notebook.add(tab, text="Process Manager")
+
+        ctrl_frame = ttk.Frame(tab, padding=10)
+        ctrl_frame.pack(fill="x")
+
+        btn_ref = tk.Button(
+            ctrl_frame,
+            text="Refresh Processes",
+            bg=self.get_c("button_bg"),
+            fg=self.get_c("button_fg"),
+            font=("Arial", 9, "bold"),
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=5,
+            command=self.load_process_list,
+        )
+        btn_ref.pack(side=tk.LEFT, padx=5)
+
+        btn_kill = tk.Button(
+            ctrl_frame,
+            text="Kill Process",
+            bg=self.get_c("danger_bg"),
+            fg="#FFFFFF",
+            font=("Arial", 9, "bold"),
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=5,
+            command=self.kill_selected_process,
+        )
+        btn_kill.pack(side=tk.RIGHT, padx=5)
+
+        table_frame = ttk.LabelFrame(tab, text=" Top Active Processes ", padding=10)
+        table_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        cols = ("pid", "name", "cpu", "mem")
+        self.proc_tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=20)
+        self.proc_tree.heading("pid", text="PID")
+        self.proc_tree.heading("name", text="Process Name")
+        self.proc_tree.heading("cpu", text="CPU (%)")
+        self.proc_tree.heading("mem", text="Memory (%)")
+
+        self.proc_tree.column("pid", width=80, anchor="center")
+        self.proc_tree.column("name", width=350, anchor="w")
+        self.proc_tree.column("cpu", width=120, anchor="center")
+        self.proc_tree.column("mem", width=120, anchor="center")
+
+        scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.proc_tree.yview)
+        self.proc_tree.configure(yscrollcommand=scroll.set)
+        self.proc_tree.pack(side=tk.LEFT, fill="both", expand=True)
+        scroll.pack(side=tk.RIGHT, fill="y")
+
+        self.load_process_list()
+
+    def load_process_list(self):
+        for item in self.proc_tree.get_children():
+            self.proc_tree.delete(item)
+
+        def fetch():
+            procs = []
+            for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
+                try:
+                    procs.append(
+                        (
+                            p.info["pid"],
+                            p.info["name"] or "Unknown",
+                            p.info["cpu_percent"] or 0.0,
+                            p.info["memory_percent"] or 0.0,
+                        )
+                    )
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            procs = sorted(procs, key=lambda x: x[2], reverse=True)[:60]
+            self.root.after(0, self.update_proc_tree, procs)
+
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def update_proc_tree(self, procs):
+        for p in procs:
+            self.proc_tree.insert("", tk.END, values=(p[0], p[1], f"{p[2]:.1f}", f"{p[3]:.1f}"))
+
+    def kill_selected_process(self):
+        selected = self.proc_tree.selection()
+        if not selected:
+            messagebox.showwarning("Select Process", "Please select a process from the table.")
+            return
+        vals = self.proc_tree.item(selected[0], "values")
+        pid = int(vals[0])
+        name = vals[1]
+
+        if messagebox.askyesno("Confirm Kill", f"Terminate '{name}' (PID: {pid})?"):
+            try:
+                psutil.Process(pid).terminate()
+                messagebox.showinfo("Success", f"Terminated {name}")
+                self.load_process_list()
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not kill process: {e}")
+
+    # =========================================================================
+    # TAB 4: Services
+    # =========================================================================
+    def build_tab_services(self):
+        tab = ttk.Frame(self.notebook, style="TFrame")
+        self.notebook.add(tab, text="Services")
+
+        ctrl_frame = ttk.Frame(tab, padding=10)
+        ctrl_frame.pack(fill="x")
+
+        btn_ref = tk.Button(
+            ctrl_frame,
+            text="Load Windows Services",
+            bg=self.get_c("button_bg"),
+            fg=self.get_c("button_fg"),
+            font=("Arial", 9, "bold"),
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=5,
+            command=self.load_win_services,
+        )
+        btn_ref.pack(side=tk.LEFT)
+
+        btn_msc = tk.Button(
+            ctrl_frame,
+            text="Open Services Manager (services.msc)",
+            bg=self.get_c("info_bg"),
+            fg="#FFFFFF",
+            font=("Arial", 9, "bold"),
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=5,
+            command=lambda: self.launch_win_tool("services.msc"),
+        )
+        btn_msc.pack(side=tk.RIGHT)
+
+        table_frame = ttk.LabelFrame(tab, text=" Installed Windows Services ", padding=10)
+        table_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        cols = ("name", "display", "status")
+        self.svc_tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=20)
+        self.svc_tree.heading("name", text="Service Name")
+        self.svc_tree.heading("display", text="Display Name")
+        self.svc_tree.heading("status", text="Status")
+
+        self.svc_tree.column("name", width=200, anchor="w")
+        self.svc_tree.column("display", width=400, anchor="w")
+        self.svc_tree.column("status", width=100, anchor="center")
+
+        scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.svc_tree.yview)
+        self.svc_tree.configure(yscrollcommand=scroll.set)
+        self.svc_tree.pack(side=tk.LEFT, fill="both", expand=True)
+        scroll.pack(side=tk.RIGHT, fill="y")
+
+        self.load_win_services()
+
+    def load_win_services(self):
+        for item in self.svc_tree.get_children():
+            self.svc_tree.delete(item)
+
+        def fetch():
+            svcs = []
+            if platform.system() == "Windows":
+                for s in psutil.win_service_iter():
+                    try:
+                        info = s.as_dict()
+                        svcs.append((info["name"], info["display_name"], info["status"]))
+                    except Exception:
+                        pass
+            self.root.after(0, self.update_svc_tree, svcs)
+
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def update_svc_tree(self, svcs):
+        for s in svcs:
+            self.svc_tree.insert("", tk.END, values=s)
+
+    # =========================================================================
+    # TAB 5: Startup Apps
+    # =========================================================================
+    def build_tab_startup_apps(self):
+        tab = ttk.Frame(self.notebook, style="TFrame")
+        self.notebook.add(tab, text="Startup Apps")
+
+        ctrl_frame = ttk.Frame(tab, padding=10)
+        ctrl_frame.pack(fill="x")
+
+        btn_ref = tk.Button(
+            ctrl_frame,
+            text="Query Startup Registry Entries",
+            bg=self.get_c("button_bg"),
+            fg=self.get_c("button_fg"),
+            font=("Arial", 9, "bold"),
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=5,
+            command=self.load_startup_apps,
+        )
+        btn_ref.pack(side=tk.LEFT)
+
+        table_frame = ttk.LabelFrame(tab, text=" Configured Startup Applications ", padding=10)
+        table_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        cols = ("location", "name", "path")
+        self.startup_tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=20)
+        self.startup_tree.heading("location", text="Scope")
+        self.startup_tree.heading("name", text="Application Name")
+        self.startup_tree.heading("path", text="Executable Path / Command")
+
+        self.startup_tree.column("location", width=120, anchor="center")
+        self.startup_tree.column("name", width=200, anchor="w")
+        self.startup_tree.column("path", width=450, anchor="w")
+
+        scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.startup_tree.yview)
+        self.startup_tree.configure(yscrollcommand=scroll.set)
+        self.startup_tree.pack(side=tk.LEFT, fill="both", expand=True)
+        scroll.pack(side=tk.RIGHT, fill="y")
+
+        self.load_startup_apps()
+
+    def load_startup_apps(self):
+        for item in self.startup_tree.get_children():
+            self.startup_tree.delete(item)
+
+        entries = []
+        locations = [
+            (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", "HKCU Run"),
+            (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run", "HKLM Run"),
+        ]
+
+        for hkey, subkey, label in locations:
+            try:
+                key = winreg.OpenKey(hkey, subkey, 0, winreg.KEY_READ)
+                i = 0
+                while True:
+                    try:
+                        name, val, _ = winreg.EnumValue(key, i)
+                        entries.append((label, name, val))
+                        i += 1
+                    except OSError:
+                        break
+                winreg.CloseKey(key)
+            except Exception:
+                pass
+
+        for entry in entries:
+            self.startup_tree.insert("", tk.END, values=entry)
+
+    # =========================================================================
+    # TAB 6: Disk & Storage
+    # =========================================================================
+    def build_tab_disk_storage(self):
+        tab = ttk.Frame(self.notebook, style="TFrame")
+        self.notebook.add(tab, text="Disk & Storage")
+
+        ctrl_frame = ttk.Frame(tab, padding=10)
+        ctrl_frame.pack(fill="x")
+
+        btn_ref = tk.Button(
+            ctrl_frame,
+            text="Refresh Drive Partitions & IO",
+            bg=self.get_c("button_bg"),
+            fg=self.get_c("button_fg"),
+            font=("Arial", 9, "bold"),
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=5,
+            command=self.load_disk_info,
+        )
+        btn_ref.pack(side=tk.LEFT)
+
+        self.disk_container = ttk.LabelFrame(tab, text=" Mounted Volumes & Space ", padding=10)
+        self.disk_container.pack(fill="both", expand=True, padx=10, pady=5)
+
+        self.load_disk_info()
+
+    def load_disk_info(self):
+        for widget in self.disk_container.winfo_children():
+            widget.destroy()
+
+        try:
+            partitions = psutil.disk_partitions()
+            for p in partitions:
+                try:
+                    usage = psutil.disk_usage(p.mountpoint)
+                    p_frame = ttk.Frame(self.disk_container, padding=5)
+                    p_frame.pack(fill="x", pady=5)
+
+                    lbl_text = f"Drive {p.device} ({p.mountpoint}) [{p.fstype}] - Free: {usage.free / (1024**3):.1f} GB / Total: {usage.total / (1024**3):.1f} GB ({usage.percent}% Used)"
+                    ttk.Label(p_frame, text=lbl_text, font=("Arial", 9, "bold")).pack(anchor="w")
+
+                    bar = ttk.Progressbar(p_frame, orient="horizontal", mode="determinate", value=usage.percent)
+                    bar.pack(fill="x", pady=2)
+                except PermissionError:
+                    continue
+        except Exception as e:
+            ttk.Label(self.disk_container, text=f"Error reading disk partitions: {e}").pack()
+
+    # =========================================================================
+    # TAB 7: Battery
+    # =========================================================================
+    def build_tab_battery(self):
+        tab = ttk.Frame(self.notebook, style="TFrame")
+        self.notebook.add(tab, text="Battery")
+
+        box = ttk.LabelFrame(tab, text=" Battery & Power Status ", padding=15)
+        box.pack(fill="x", padx=15, pady=15)
+
+        self.batt_label = ttk.Label(box, text="Checking battery status...", font=("Arial", 11, "bold"))
+        self.batt_label.pack(anchor="w", pady=5)
+
+        self.batt_bar = ttk.Progressbar(box, orient="horizontal", mode="determinate")
+        self.batt_bar.pack(fill="x", pady=10)
+
+        self.batt_details = ttk.Label(box, text="", font=("Arial", 9))
+        self.batt_details.pack(anchor="w")
+
+        self.update_battery_status()
+
+    def update_battery_status(self):
+        battery = psutil.sensors_battery()
+        if battery:
+            pct = battery.percent
+            plugged = "AC Power Connected (Charging)" if battery.power_plugged else "Running on Battery"
+            secs = battery.secsleft
+            time_str = f"Estimated Time Remaining: {secs // 3600}h {(secs % 3600) // 60}m" if secs > 0 and secs != psutil.POWER_TIME_UNLIMITED else "Time Remaining: Calculating / AC Power"
+
+            self.batt_label.config(text=f"Battery Charge: {pct}%")
+            self.batt_bar["value"] = pct
+            self.batt_details.config(text=f"Power State: {plugged}\n{time_str}")
         else:
-          output = (
-              "The 'systeminfo' command is specific to Windows operating"
-              " systems."
-          )
-        self.root.after(0, self.update_system_info_output, output)
-      except Exception as e:
-        self.root.after(
-            0, self.update_system_info_output, f"Error gathering info: {e}"
+            self.batt_label.config(text="No Battery Detected (Desktop Computer / AC Only)")
+            self.batt_bar["value"] = 100
+            self.batt_details.config(text="System is operating without a battery sensor.")
+
+    # =========================================================================
+    # TAB 8: Hardware Info
+    # =========================================================================
+    def build_tab_hardware_info(self):
+        tab = ttk.Frame(self.notebook, style="TFrame")
+        self.notebook.add(tab, text="Hardware Info")
+
+        ctrl_frame = ttk.Frame(tab, padding=10)
+        ctrl_frame.pack(fill="x")
+
+        btn_hw = tk.Button(
+            ctrl_frame,
+            text="Generate Detailed Hardware Spec Report",
+            bg=self.get_c("success_bg"),
+            fg="#1E222A",
+            font=("Arial", 9, "bold"),
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=5,
+            command=self.load_hardware_report,
         )
+        btn_hw.pack(side=tk.LEFT)
 
-    threading.Thread(target=fetch, daemon=True).start()
+        out_frame = ttk.LabelFrame(tab, text=" Complete Hardware Diagnostics ", padding=10)
+        out_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-  def update_system_info_output(self, text):
-    self.info_text.config(state="normal")
-    self.info_text.delete("1.0", tk.END)
-    self.info_text.insert(tk.END, text)
-    self.info_text.see("1.0")
-    self.info_text.config(state="disabled")
-
-  def reboot_pc(self):
-    if messagebox.askyesno(
-        "Confirm Restart",
-        "Are you sure you want to restart your computer now?",
-    ):
-      try:
-        if platform.system() == "Windows":
-          os.system("shutdown /r /t 5")
-        else:
-          os.system("sudo reboot")
-        messagebox.showinfo(
-            "Restarting", "System restart command sent successfully."
+        self.hw_text = tk.Text(
+            out_frame,
+            font=("Consolas", 9),
+            bg=self.get_c("text_area_bg"),
+            fg=self.get_c("text_area_fg"),
+            insertbackground=self.get_c("fg"),
+            relief="flat",
         )
-      except Exception as e:
-        messagebox.showerror("Error", f"Failed to restart: {e}")
+        self.hw_text.pack(fill="both", expand=True, side=tk.LEFT)
+        scroll = ttk.Scrollbar(out_frame, command=self.hw_text.yview)
+        scroll.pack(side=tk.RIGHT, fill="y")
+        self.hw_text.config(yscrollcommand=scroll.set)
 
-  def shutdown_pc(self):
-    if messagebox.askyesno(
-        "Confirm Shutdown", "Are you sure you want to shut down your computer?"
-    ):
-      try:
-        if platform.system() == "Windows":
-          os.system("shutdown /s /t 5")
-        else:
-          os.system("sudo shutdown now")
-        messagebox.showinfo(
-            "Shutting Down", "System shutdown command sent successfully."
+        self.load_hardware_report()
+
+    def load_hardware_report(self):
+        cmd = 'powershell -Command "Get-CimInstance Win32_ComputerSystem | Format-List Manufacturer, Model, TotalPhysicalMemory; Get-CimInstance Win32_Processor | Format-List Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed; Get-CimInstance Win32_BIOS | Format-List Manufacturer, SMBIOSBIOSVersion, ReleaseDate"'
+        self.run_cmd_async(cmd, self.hw_text)
+
+    # =========================================================================
+    # TAB 9: Windows Security
+    # =========================================================================
+    def build_tab_win_security(self):
+        tab = ttk.Frame(self.notebook, style="TFrame")
+        self.notebook.add(tab, text="Windows Security")
+
+        ctrl_frame = ttk.Frame(tab, padding=10)
+        ctrl_frame.pack(fill="x")
+
+        btn_sec = tk.Button(
+            ctrl_frame,
+            text="Query Security & Defender Status",
+            bg=self.get_c("button_bg"),
+            fg=self.get_c("button_fg"),
+            font=("Arial", 9, "bold"),
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=5,
+            command=self.load_sec_status,
         )
-      except Exception as e:
-        messagebox.showerror("Error", f"Failed to shut down: {e}")
+        btn_sec.pack(side=tk.LEFT, padx=5)
 
-  def open_rdp(self):
-    try:
-      if platform.system() == "Windows":
-        subprocess.Popen("mstsc")
-      else:
-        messagebox.showinfo(
-            "Info", "RDP shortcut launcher is optimized natively for Windows."
+        btn_app = tk.Button(
+            ctrl_frame,
+            text="Launch Windows Security App",
+            bg=self.get_c("info_bg"),
+            fg="#FFFFFF",
+            font=("Arial", 9, "bold"),
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=5,
+            command=lambda: self.launch_win_tool("ms-settings:windowsdefender"),
         )
-    except Exception as e:
-      messagebox.showerror("Error", f"Could not launch RDP: {e}")
+        btn_app.pack(side=tk.RIGHT, padx=5)
 
-  def run_command_in_terminal(self, command, log_title):
-    self.net_text.config(state="normal")
-    self.net_text.insert(
-        tk.END, f"\n--- Executing: {log_title} ---\n", "header"
-    )
-    self.net_text.see(tk.END)
-    self.net_text.config(state="disabled")
+        out_frame = ttk.LabelFrame(tab, text=" Security Center Diagnostics ", padding=10)
+        out_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-    def execute():
-      try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            shell=True,
-            encoding="oem" if platform.system() == "Windows" else "utf-8",
+        self.sec_text = tk.Text(
+            out_frame,
+            font=("Consolas", 9),
+            bg=self.get_c("text_area_bg"),
+            fg=self.get_c("text_area_fg"),
+            insertbackground=self.get_c("fg"),
+            relief="flat",
         )
-        output = result.stdout if result.stdout else result.stderr
-        self.root.after(0, self.update_net_output, output)
-      except Exception as e:
-        self.root.after(0, self.update_net_output, f"Error executing: {e}")
+        self.sec_text.pack(fill="both", expand=True, side=tk.LEFT)
+        scroll = ttk.Scrollbar(out_frame, command=self.sec_text.yview)
+        scroll.pack(side=tk.RIGHT, fill="y")
+        self.sec_text.config(yscrollcommand=scroll.set)
 
-    threading.Thread(target=execute, daemon=True).start()
+        self.load_sec_status()
 
-  def update_net_output(self, text):
-    self.net_text.config(state="normal")
-    self.net_text.insert(tk.END, text + "\n")
-    self.net_text.see(tk.END)
-    self.net_text.config(state="disabled")
+    def load_sec_status(self):
+        cmd = 'powershell -Command "Get-MpComputerStatus | Select-Object AntivirusEnabled, RealTimeProtectionEnabled, IoavProtectionEnabled, BehaviorMonitorEnabled, AntispywareEnabled, NISSignatureVersion | Format-List"'
+        self.run_cmd_async(cmd, self.sec_text)
 
-  def run_ipconfig_all(self):
-    self.run_command_in_terminal("ipconfig /all", "ipconfig /all")
+    # =========================================================================
+    # TAB 10: Network Adapters
+    # =========================================================================
+    def build_tab_network_adapters(self):
+        tab = ttk.Frame(self.notebook, style="TFrame")
+        self.notebook.add(tab, text="Network Adapters")
 
-  def run_eth_release(self):
-    if messagebox.askyesno("Confirm", "Release Ethernet IP lease?"):
-      self.run_command_in_terminal(
-          'ipconfig /release "Ethernet"', 'ipconfig /release "Ethernet"'
-      )
+        ctrl_frame = ttk.Frame(tab, padding=10)
+        ctrl_frame.pack(fill="x")
 
-  def run_eth_renew(self):
-    self.run_command_in_terminal(
-        'ipconfig /renew "Ethernet"', 'ipconfig /renew "Ethernet"'
-    )
+        btn_all = tk.Button(
+            ctrl_frame,
+            text="View ipconfig /all",
+            bg=self.get_c("success_bg"),
+            fg="#1E222A",
+            font=("Arial", 8, "bold"),
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=4,
+            command=lambda: self.run_cmd_async("ipconfig /all", self.net_text),
+        )
+        btn_all.pack(side=tk.LEFT, padx=3)
 
-  def run_wifi_release(self):
-    if messagebox.askyesno("Confirm", "Release Wi-Fi IP lease?"):
-      self.run_command_in_terminal(
-          'ipconfig /release "Wi-Fi"', 'ipconfig /release "Wi-Fi"'
-      )
+        btn_rel = tk.Button(
+            ctrl_frame,
+            text="Release IP",
+            bg=self.get_c("warning_bg"),
+            fg="#1E222A",
+            font=("Arial", 8, "bold"),
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=4,
+            command=lambda: self.run_cmd_async("ipconfig /release", self.net_text),
+        )
+        btn_rel.pack(side=tk.LEFT, padx=3)
 
-  def run_wifi_renew(self):
-    self.run_command_in_terminal(
-        'ipconfig /renew "Wi-Fi"', 'ipconfig /renew "Wi-Fi"'
-    )
+        btn_ren = tk.Button(
+            ctrl_frame,
+            text="Renew IP",
+            bg=self.get_c("info_bg"),
+            fg="#FFFFFF",
+            font=("Arial", 8, "bold"),
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=4,
+            command=lambda: self.run_cmd_async("ipconfig /renew", self.net_text),
+        )
+        btn_ren.pack(side=tk.LEFT, padx=3)
 
-  def on_closing(self):
-    self.is_running = False
-    self.root.destroy()
+        out_frame = ttk.LabelFrame(tab, text=" Network Interfaces & Output ", padding=10)
+        out_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        self.net_text = tk.Text(
+            out_frame,
+            font=("Consolas", 9),
+            bg=self.get_c("text_area_bg"),
+            fg=self.get_c("text_area_fg"),
+            insertbackground=self.get_c("fg"),
+            relief="flat",
+        )
+        self.net_text.pack(fill="both", expand=True, side=tk.LEFT)
+        scroll = ttk.Scrollbar(out_frame, command=self.net_text.yview)
+        scroll.pack(side=tk.RIGHT, fill="y")
+        self.net_text.config(yscrollcommand=scroll.set)
+
+        self.run_cmd_async("ipconfig /all", self.net_text)
+
+    # =========================================================================
+    # TAB 11: Event Logs
+    # =========================================================================
+    def build_tab_event_logs(self):
+        tab = ttk.Frame(self.notebook, style="TFrame")
+        self.notebook.add(tab, text="Event Logs")
+
+        ctrl_frame = ttk.Frame(tab, padding=10)
+        ctrl_frame.pack(fill="x")
+
+        btn_sys = tk.Button(
+            ctrl_frame,
+            text="Fetch Recent System Errors",
+            bg=self.get_c("danger_bg"),
+            fg="#FFFFFF",
+            font=("Arial", 8, "bold"),
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=4,
+            command=self.load_system_events,
+        )
+        btn_sys.pack(side=tk.LEFT, padx=4)
+
+        btn_app = tk.Button(
+            ctrl_frame,
+            text="Fetch Recent App Errors",
+            bg=self.get_c("warning_bg"),
+            fg="#1E222A",
+            font=("Arial", 8, "bold"),
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=4,
+            command=self.load_app_events,
+        )
+        btn_app.pack(side=tk.LEFT, padx=4)
+
+        btn_vwr = tk.Button(
+            ctrl_frame,
+            text="Open Event Viewer (eventvwr.msc)",
+            bg=self.get_c("button_bg"),
+            fg=self.get_c("button_fg"),
+            font=("Arial", 8, "bold"),
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=4,
+            command=lambda: self.launch_win_tool("eventvwr.msc"),
+        )
+        btn_vwr.pack(side=tk.RIGHT, padx=4)
+
+        out_frame = ttk.LabelFrame(tab, text=" Event Log Diagnostic Records ", padding=10)
+        out_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        self.event_text = tk.Text(
+            out_frame,
+            font=("Consolas", 9),
+            bg=self.get_c("text_area_bg"),
+            fg=self.get_c("text_area_fg"),
+            insertbackground=self.get_c("fg"),
+            relief="flat",
+        )
+        self.event_text.pack(fill="both", expand=True, side=tk.LEFT)
+        scroll = ttk.Scrollbar(out_frame, command=self.event_text.yview)
+        scroll.pack(side=tk.RIGHT, fill="y")
+        self.event_text.config(yscrollcommand=scroll.set)
+
+        self.load_system_events()
+
+    def load_system_events(self):
+        cmd = 'powershell -Command "Get-EventLog -LogName System -EntryType Error,Warning -Newest 15 | Select-Object TimeGenerated, Source, EventID, Message | Format-List"'
+        self.run_cmd_async(cmd, self.event_text)
+
+    def load_app_events(self):
+        cmd = 'powershell -Command "Get-EventLog -LogName Application -EntryType Error,Warning -Newest 15 | Select-Object TimeGenerated, Source, EventID, Message | Format-List"'
+        self.run_cmd_async(cmd, self.event_text)
+
+    # =========================================================================
+    # TAB 12: Quick Diagnostics
+    # =========================================================================
+    def build_tab_quick_diagnostics(self):
+        tab = ttk.Frame(self.notebook, style="TFrame")
+        self.notebook.add(tab, text="Quick Diagnostics")
+
+        ctrl_frame = ttk.Frame(tab, padding=10)
+        ctrl_frame.pack(fill="x")
+
+        ttk.Label(ctrl_frame, text="Ping Target:", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=(0, 4))
+        self.ping_entry = ttk.Entry(ctrl_frame, font=("Arial", 9), width=15)
+        self.ping_entry.insert(0, "8.8.8.8")
+        self.ping_entry.pack(side=tk.LEFT, padx=4)
+
+        btn_ping = tk.Button(
+            ctrl_frame,
+            text="Ping",
+            bg=self.get_c("info_bg"),
+            fg="#FFFFFF",
+            font=("Arial", 8, "bold"),
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=3,
+            command=lambda: self.run_cmd_async(f"ping -n 4 {self.ping_entry.get().strip()}", self.diag_text),
+        )
+        btn_ping.pack(side=tk.LEFT, padx=4)
+
+        btn_dns = tk.Button(
+            ctrl_frame,
+            text="Flush DNS",
+            bg=self.get_c("warning_bg"),
+            fg="#1E222A",
+            font=("Arial", 8, "bold"),
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=3,
+            command=lambda: self.run_cmd_async("ipconfig /flushdns", self.diag_text),
+        )
+        btn_dns.pack(side=tk.LEFT, padx=4)
+
+        btn_arp = tk.Button(
+            ctrl_frame,
+            text="ARP Table",
+            bg=self.get_c("success_bg"),
+            fg="#1E222A",
+            font=("Arial", 8, "bold"),
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=3,
+            command=lambda: self.run_cmd_async("arp -a", self.diag_text),
+        )
+        btn_arp.pack(side=tk.LEFT, padx=4)
+
+        btn_netstat = tk.Button(
+            ctrl_frame,
+            text="Active Conns (netstat)",
+            bg=self.get_c("button_bg"),
+            fg=self.get_c("button_fg"),
+            font=("Arial", 8, "bold"),
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=3,
+            command=lambda: self.run_cmd_async("netstat -ano", self.diag_text),
+        )
+        btn_netstat.pack(side=tk.LEFT, padx=4)
+
+        out_frame = ttk.LabelFrame(tab, text=" Diagnostics Command Log ", padding=10)
+        out_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        self.diag_text = tk.Text(
+            out_frame,
+            font=("Consolas", 9),
+            bg=self.get_c("text_area_bg"),
+            fg=self.get_c("text_area_fg"),
+            insertbackground=self.get_c("fg"),
+            relief="flat",
+        )
+        self.diag_text.pack(fill="both", expand=True, side=tk.LEFT)
+        scroll = ttk.Scrollbar(out_frame, command=self.diag_text.yview)
+        scroll.pack(side=tk.RIGHT, fill="y")
+        self.diag_text.config(yscrollcommand=scroll.set)
+
+    # =========================================================================
+    # Metric Loop
+    # =========================================================================
+    def update_metrics_loop(self):
+        last_net_io = psutil.net_io_counters()
+        last_time = time.time()
+
+        while self.is_running:
+            time.sleep(1)
+            if not self.is_running:
+                break
+
+            ram = psutil.virtual_memory()
+            ram_text = f"Used: {ram.used / (1024**3):.2f} GB / Total: {ram.total / (1024**3):.2f} GB ({ram.percent}%)"
+
+            cpu_pct = psutil.cpu_percent(interval=None)
+            cpu_text = f"Overall CPU Usage: {cpu_pct:.1f}%"
+
+            core_pcts = psutil.cpu_percent(percpu=True)
+
+            curr_net_io = psutil.net_io_counters()
+            curr_time = time.time()
+            dt = curr_time - last_time if (curr_time - last_time) > 0 else 1.0
+
+            up_speed = (curr_net_io.bytes_sent - last_net_io.bytes_sent) / dt / 1024.0
+            down_speed = (curr_net_io.bytes_recv - last_net_io.bytes_recv) / dt / 1024.0
+
+            last_net_io = curr_net_io
+            last_time = curr_time
+
+            self.root.after(0, self.update_metrics_gui, ram_text, ram.percent, cpu_text, cpu_pct, core_pcts, up_speed, down_speed)
+
+    def update_metrics_gui(self, ram_text, ram_pct, cpu_text, cpu_pct, core_pcts, up_speed, down_speed):
+        if hasattr(self, "ram_label"):
+            self.ram_label.config(text=ram_text)
+            self.ram_bar["value"] = ram_pct
+
+        if hasattr(self, "cpu_info_label"):
+            self.cpu_info_label.config(text=cpu_text)
+            self.cpu_bar["value"] = cpu_pct
+
+        if hasattr(self, "net_io_label"):
+            self.net_io_label.config(text=f"Upload: {up_speed:.2f} KB/s | Download: {down_speed:.2f} KB/s")
+
+        if hasattr(self, "core_bars"):
+            for idx, (lbl, bar) in enumerate(self.core_bars):
+                if idx < len(core_pcts):
+                    val = core_pcts[idx]
+                    lbl.config(text=f"Core {idx}: {val:.1f}%")
+                    bar["value"] = val
+
+        self.update_battery_status()
 
 
 if __name__ == "__main__":
-  root = tk.Tk()
-  app = SystemMonitorApp(root)
-  root.protocol("WM_DELETE_WINDOW", app.on_closing)
-  root.mainloop()
+    root = tk.Tk()
+    app = ComprehensiveSystemMonitorApp(root)
+    root.mainloop()
